@@ -1,0 +1,11 @@
+
+# Ignore dynaconf secret files
+.secrets.*
+
+# Python
+__pycache__
+.venv
+
+# App
+secrets.*
+*.db
