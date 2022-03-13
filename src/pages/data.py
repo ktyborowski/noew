@@ -27,6 +27,15 @@ def get_data(format):
     con.close()
     return df.to_csv(index=False).encode("utf-8")
 
+def validate_data(df):
+    columns = set(df.columns.values.tolist())
+    required = {"text", "source", "category"}
+
+    missing = required - columns
+    if missing:
+        return False, missing
+    else:
+        return True, {}
 
 def write():
     st.write("# Dane")
@@ -37,20 +46,22 @@ def write():
         "Akcpetowanym formatem danych wejściowych w **NOEW** jest plik w fromacie CSV."
     )
 
-    st.write(
+    with st.expander("Struktura danych wejściowych"):
+        st.write(
+            """
+            | Atrybut  | Opis                                          | Typ        | Opcjonalny |
+            |----------|-----------------------------------------------|------------|------------|
+            | text     | Tekst zdania.                                 | str        | Nie        |
+            | source   | Źródło tekstu. Np. Twitter.                   | str        | Tak        |
+            | category | Kategoria tekstu. Np. Recenzja, Komentarz etc.| str        | Tak        |
         """
-        Struktura danych wejściowych:
-        | Atrybut  | Opis                                           | Opcjonalny |
-        |----------|------------------------------------------------|------------|
-        | text     | Tekst zdania.                                  | Nie        |
-        | source   | Źródło tekstu. Np. Twitter.                    | Tak        |
-        | category | Kategoria tekstu. Np. Recenzja, Komentarz etc. | Tak        |
-    """
-    )
-    st.write("")
+        )
+        st.write("")
     file = st.file_uploader("Wybierz plik CSV", key="files", type="csv")
 
     if file:
+
+
         conn = sqlite3.connect(settings["database"])
         cur = conn.cursor()
 
@@ -59,32 +70,55 @@ def write():
         )
 
         data = pd.read_csv(file)
-        data.to_sql("input", conn, if_exists="append", index=False)
+
+
+        is_valid, missing = validate_data(data)
+
+        if is_valid:
+            data.to_sql("input", conn, if_exists="append", index=False)
+            st.success(f"Pomyślnie załadowano dane z pliku: {file.name}.")
+        else:
+            message = "Załączony plik ma brakujące kolumny: {}.".format(", ".join(missing))
+            st.error(message)
 
         conn.commit()
         cur.close()
         conn.close()
 
-        st.success(f"Pomyślnie załadowano dane z pliku: {file.name}.")
 
     st.write("## Dane wyjściowe")
     st.write("**NOEW** umożliwia ekport danych w formacie CSV lub Json Lines.")
 
-    st.write(
+    with st.expander("Struktura danych wyjściowych"):
+        st.write(
+            """
+            | Atrybut   | Opis                                            | Typ        | Opcjonalny |
+            |-----------|-------------------------------------------------|------------|------------|
+            | text      | Tekst zdania.                                   | str        | Nie        |
+            | source    | Źródło tekstu. Np. Twitter.                     | str        | Tak        |
+            | category  | Kategoria tekstu. Np. Recenzja, Komentarz etc.  | str        | Tak        |
+            | sentiment | Ogólny sentyment tekstu.                        | int        | Nie        |
+            | happiness | Emocja rozpoznawalna w tekście - radość         | int        | Nie        |
+            | sadness   | Emocja rozpoznawalna w tekście - smutek         | int        | Nie        |
+            | fear      | Emocja rozpoznawalna w tekście - strach         | int        | Nie        |
+            | disgust   | Emocja rozpoznawalna w tekście - wstręt         | int        | Nie        |
+            | anger     | Emocja rozpoznawalna w tekście - złość          | int        | Nie        |
+            | surprise  | Emocja rozpoznawalna w tekście - zaskoczenie    | int        | Nie        |
         """
-        Struktura danych wyjściowych:
-        | Atrybut  | Opis                                           | Opcjonalny |
-        |----------|------------------------------------------------|------------|
-        | text     | Tekst zdania.                                  | Nie        |
-        | source   | Źródło tekstu. Np. Twitter.                    | Tak        |
-        | category | Kategoria tekstu. Np. Recenzja, Komentarz etc. | Tak        |
-    """
-    )
-    st.write("")
+        )
+        st.write("")
 
+        st.write("""
+        Sentyment jest reprezentowany przez wartość numeryczną gdzie:  
+        0 - Negatywny,  
+        1 - Neutralny,  
+        2 - Pozytywny.
+    
+        Emocje są reprezentowane przez wartość numeryczną zero-jedynkową.
+        """)
     formats = {"CSV": "csv", "JSON Lines": "jsonl"}
 
     format_choice = st.selectbox("Wybierz format pliku", options=["CSV", "JSON Lines"])
     format = formats.get(format_choice)
 
-    st.download_button("Pobierz dane", get_data(format), "noew_data.txt")
+    st.download_button("Pobierz dane", get_data(format), f"noew_data.{format}")

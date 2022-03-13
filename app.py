@@ -5,7 +5,7 @@ import src.pages.data
 import src.pages.options
 import src.pages.about
 from src.auth import check_password
-
+from config import settings
 
 PAGES = {
     "Home": src.pages.home,
@@ -39,7 +39,7 @@ def main():
 
     page = PAGES[selection]
 
-    if selection == "Dane":
+    if selection == "Dane" and settings["auth"]:
         if check_password():
             write_page(page)
     else:

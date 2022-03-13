@@ -20,6 +20,9 @@ def initialize_db():
 
 
 def initalize_state():
+    if "sentiment" not in st.session_state:
+        st.session_state["sentiment"] = "Neutralny"
+
     if "data" not in st.session_state:
         st.session_state["submit"] = False
 
@@ -147,7 +150,6 @@ def write():
             key="sentiment",
             help="Ogólne nastawienie emocjonalne zdania.",
             options=["Negatywny", "Neutralny", "Pozytywny"],
-            value="Neutralny"
         )
         st.write("---")
     
