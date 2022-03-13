@@ -1,0 +1,1 @@
+# NOEW: Narzędzie Oznaczania Emocji i Wydźwięku
