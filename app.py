@@ -4,12 +4,14 @@ import src.pages.home
 import src.pages.data
 import src.pages.options
 import src.pages.about
+import src.pages.status
 from src.auth import check_password
 from config import settings
 
 PAGES = {
     "Home": src.pages.home,
     "Dane": src.pages.data,
+    "Status": src.pages.status
     #"Konfiguracja": src.pages.options,
     #"Opis": src.pages.about,
 }
