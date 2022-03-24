@@ -3,14 +3,17 @@ import sqlite3
 import pandas as pd
 import json
 from config import settings
-
-
 def get_data(format):
     query = "SELECT * FROM results"
     con = sqlite3.connect(settings["database"])
 
-    if format == "csv":
+    if format in ["csv", "tsv"]:
         df = pd.read_sql(query, con)
+
+    if format == "csv":
+        data = df.to_csv(index=False).encode("utf-8")
+    elif format == "tsv":
+        data = df.to_csv(index=False, sep="\t").encode("utf-8")
     elif format == "jsonl":
         con.row_factory = sqlite3.Row
         cur = con.cursor()
@@ -20,13 +23,12 @@ def get_data(format):
 
         json_lines = [json.dumps(dict(row)) for row in rows]
 
-        return "\n".join(json_lines)
+        data = "\n".join(json_lines)
     else:
         raise ValueError(f"Uknown format: {format}")
 
     con.close()
-    return df.to_csv(index=False).encode("utf-8")
-
+    return data
 def validate_data(df):
     columns = set(df.columns.values.tolist())
     required = {"text", "source", "category"}
@@ -37,8 +39,10 @@ def validate_data(df):
     else:
         return True, {}
 
+
 def write():
     st.write("# Dane")
+
 
     st.write("## Dane wejściowe")
 
@@ -116,9 +120,9 @@ def write():
     
         Emocje są reprezentowane przez wartość numeryczną zero-jedynkową.
         """)
-    formats = {"CSV": "csv", "JSON Lines": "jsonl"}
+    formats = {"CSV": "csv", "TSV": "tsv", "JSON Lines": "jsonl"}
 
-    format_choice = st.selectbox("Wybierz format pliku", options=["CSV", "JSON Lines"])
+    format_choice = st.selectbox("Wybierz format pliku", options=formats.keys())
     format = formats.get(format_choice)
 
     st.download_button("Pobierz dane", get_data(format), f"noew_data.{format}")
