@@ -102,7 +102,7 @@ def write():
 
     st.write("## Dane wyjściowe")
     st.write(
-        "**NOEW** umożliwia ekport oznaczonych danych w formacie CSV lub Json Lines."
+        "**NOEW** umożliwia ekport oznaczonych danych w formacie CSV, TSV lub Json Lines."
     )
 
     with st.expander("Struktura danych wyjściowych"):
