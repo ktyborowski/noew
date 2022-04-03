@@ -1,10 +1,17 @@
-import streamlit as st
-import sqlite3
-import pandas as pd
+import zipfile
+from io import BytesIO
 import json
+import sqlite3
+
+import pandas as pd
+import streamlit as st
+
 from config import settings
-def get_data(format):
-    query = "SELECT * FROM results"
+
+
+
+def get_data(table, format):
+    query = f"SELECT * FROM {table}"
     con = sqlite3.connect(settings["database"])
 
     if format in ["csv", "tsv"]:
@@ -29,6 +36,16 @@ def get_data(format):
 
     con.close()
     return data
+
+def generate_zip(files):
+    mem_zip = BytesIO()
+
+    with zipfile.ZipFile(mem_zip, mode="w",compression=zipfile.ZIP_DEFLATED) as zf:
+        for f in files:
+            zf.writestr(f[0], f[1])
+
+    return mem_zip.getvalue()
+
 def validate_data(df):
     columns = set(df.columns.values.tolist())
     required = {"text", "source", "category"}
@@ -42,7 +59,6 @@ def validate_data(df):
 
 def write():
     st.write("# Dane")
-
 
     st.write("## Dane wejściowe")
 
@@ -64,41 +80,39 @@ def write():
     file = st.file_uploader("Wybierz plik CSV", key="files", type="csv")
 
     if file:
-
-
-        conn = sqlite3.connect(settings["database"])
-        cur = conn.cursor()
-
-        cur.execute(
-            """CREATE TABLE IF NOT EXISTS input (id INTEGER PRIMARY KEY ASC, text TEXT, source TEXT, category TEXT)"""
-        )
+        con = sqlite3.connect(settings["database"])
+        cur = con.cursor()
 
         data = pd.read_csv(file)
-
 
         is_valid, missing = validate_data(data)
 
         if is_valid:
-            data.to_sql("input", conn, if_exists="append", index=False)
+            data.to_sql("input", con, if_exists="append", index=False)
             st.success(f"Pomyślnie załadowano dane z pliku: {file.name}.")
         else:
-            message = "Załączony plik ma brakujące kolumny: {}.".format(", ".join(missing))
+            message = "Załączony plik ma brakujące kolumny: {}.".format(
+                ", ".join(missing)
+            )
             st.error(message)
 
-        conn.commit()
+        con.commit()
         cur.close()
-        conn.close()
-
+        con.close()
 
     st.write("## Dane wyjściowe")
-    st.write("**NOEW** umożliwia ekport danych w formacie CSV lub Json Lines.")
+    st.write(
+        "**NOEW** umożliwia ekport oznaczonych danych w formacie CSV lub Json Lines."
+    )
 
     with st.expander("Struktura danych wyjściowych"):
+        st.write("##### Oznaczone:")
         st.write(
             """
             | Atrybut   | Opis                                            | Typ        | Opcjonalny |
             |-----------|-------------------------------------------------|------------|------------|
             | text      | Tekst zdania.                                   | str        | Nie        |
+            | timestamp | Czas oznaczenia.                                | str        | Nie        |
             | source    | Źródło tekstu. Np. Twitter.                     | str        | Tak        |
             | category  | Kategoria tekstu. Np. Recenzja, Komentarz etc.  | str        | Tak        |
             | sentiment | Ogólny sentyment tekstu.                        | int        | Nie        |
@@ -112,17 +126,56 @@ def write():
         )
         st.write("")
 
-        st.write("""
+        st.write(
+            """
         Sentyment jest reprezentowany przez wartość numeryczną gdzie:  
         0 - Negatywny,  
         1 - Neutralny,  
         2 - Pozytywny.
     
         Emocje są reprezentowane przez wartość numeryczną zero-jedynkową.
-        """)
+        """
+        )
+        
+        st.write("##### Pominięte:")
+        st.write("Dane pominięte mają tę samą strukturę co dane wejściowe.")
+
     formats = {"CSV": "csv", "TSV": "tsv", "JSON Lines": "jsonl"}
 
-    format_choice = st.selectbox("Wybierz format pliku", options=formats.keys())
-    format = formats.get(format_choice)
+    exports = {"Oznaczone": "labeled", "Pominięte": "skipped"}
 
-    st.download_button("Pobierz dane", get_data(format), f"noew_data.{format}")
+   # export_choice = st.selectbox("Wybierz co eksportować", options=exports.keys())
+    export_selection = st.multiselect("Wybierz co eksportować", options=exports.keys(), default=["Oznaczone"])
+
+    if export_selection:
+        disable_export = False
+    else:
+        disable_export = True
+
+
+    format_choice = st.selectbox("Wybierz format pliku", options=formats.keys(), disabled=disable_export)
+    export_format = formats.get(format_choice)
+
+    file_format = ""
+    file = ""
+    if len(export_selection) > 1:
+        files = []
+        for selection in export_selection:
+            table = exports.get(selection)
+            data = get_data(table, export_format)
+            file_name = f"{table}_noew_data.{export_format}"
+            files.append((file_name, data))
+
+        file = generate_zip(files)
+        file_format = "zip"
+    elif len(export_selection) == 1:
+        table = exports.get(export_selection.pop())
+        file = get_data(table, export_format)
+        file_format = export_format
+
+
+
+    st.download_button(
+        "Pobierz dane", file, f"noew_data.{file_format}",
+        disabled=disable_export
+    )
