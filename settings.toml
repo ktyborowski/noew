@@ -1,3 +1,8 @@
+# Internal database name
 database = "noew.db"
+
+# Allow the user to skip annotation
 unskippable = false
-auth = false
+
+# Pages with required authentication
+auth = ["Dane", "Status"]
