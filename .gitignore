@@ -9,3 +9,6 @@ __pycache__
 # App
 secrets.*
 *.db
+
+# VS Code
+.vscode/
