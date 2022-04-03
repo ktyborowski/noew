@@ -1,25 +1,60 @@
 """Main module for the streamlit app"""
+import logging
+import sqlite3
+
 import streamlit as st
-import src.pages.home
+
 import src.pages.data
-import src.pages.options
-import src.pages.about
+import src.pages.annotate
 import src.pages.status
-from src.auth import check_password
 from config import settings
+from src.auth import check_password
+
+formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+console_handler = logging.StreamHandler()
+console_handler.setFormatter(formatter)
+log = logging.getLogger(__name__)
+
 
 PAGES = {
-    "Home": src.pages.home,
+    "Oznaczanie": src.pages.annotate,
     "Dane": src.pages.data,
     "Status": src.pages.status
-    #"Konfiguracja": src.pages.options,
-    #"Opis": src.pages.about,
 }
 
 
+def initialize_db():
+    log.debug("Initializing database.")
+    con = sqlite3.connect(settings["database"])
+    con.execute('pragma journal_mode=wal')
+    
+    cur = con.cursor()
+
+    cur.execute(
+        """CREATE TABLE IF NOT EXISTS input (id INTEGER PRIMARY KEY ASC, text TEXT, source TEXT, category TEXT)"""
+    )
+
+    cur.execute(
+        """CREATE TABLE IF NOT EXISTS skipped (id INTEGER PRIMARY KEY ASC, text TEXT, source TEXT, category TEXT)"""
+    )
+    cur.execute(
+        """CREATE TABLE IF NOT EXISTS labeled
+                       (text text,
+                       timestamp text,
+                       sentiment integer,
+                       happiness integer,
+                       sadness integer,
+                       fear integer,
+                       disgust integer,
+                       anger integer,
+                       surprise integer)"""
+    )
+    con.commit()
+    cur.close()
+    con.close()
 
 
-def write_page(page):  # pylint: disable=redefined-outer-name
+def write_page(page):
     """Writes the specified page/module
     Our multipage app is structured into sub-files with a `def write()` function
     Arguments:
@@ -32,16 +67,18 @@ def write_page(page):  # pylint: disable=redefined-outer-name
 def main():
     st.set_page_config(
         page_title="NOEW: Narzędzie Oznaczania Emocji i Wydźwięku",
-        page_icon="🧊",
+        page_icon="📝",
         layout="centered",
     )
+    initialize_db()
+
     sidebar = st.sidebar
     sidebar.title("Nawigacja")
-    selection = sidebar.radio("Go to", list(PAGES.keys()))
+    selection = sidebar.radio("Idź do", list(PAGES.keys()))
 
     page = PAGES[selection]
 
-    if selection == "Dane" and settings["auth"]:
+    if selection in settings["auth"]:
         if check_password():
             write_page(page)
     else:
