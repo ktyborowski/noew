@@ -1,54 +1,60 @@
 import zipfile
 from io import BytesIO
-import json
-import sqlite3
-
+from datetime import datetime
 import pandas as pd
 import streamlit as st
-
-from config import settings
-
+from src import db
 
 
-def get_data(table, format):
-    query = f"SELECT * FROM {table}"
-    con = sqlite3.connect(settings["database"])
+conn = db.init_connection()
 
-    if format in ["csv", "tsv"]:
-        df = pd.read_sql(query, con)
+
+def get_data(format):
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT
+            annotation.created_at,
+            input.text,
+            score,
+            magnitude,
+            happiness,
+            sadness,
+            fear,
+            disgust,
+            anger,
+            surprise FROM annotation
+            LEFT JOIN input ON annotation.input_id = input.id;
+        """)
+        rows = cur.fetchall()
+
+    df = pd.DataFrame(rows)
 
     if format == "csv":
-        data = df.to_csv(index=False).encode("utf-8")
+        data = df.to_csv(index=False)
     elif format == "tsv":
-        data = df.to_csv(index=False, sep="\t").encode("utf-8")
-    elif format == "jsonl":
-        con.row_factory = sqlite3.Row
-        cur = con.cursor()
-        cur.execute(query)
-        rows = cur.fetchall()
-        cur.close()
-
-        json_lines = [json.dumps(dict(row)) for row in rows]
-
-        data = "\n".join(json_lines)
+        data = df.to_csv(index=False, sep="\t")
+    elif format == "json":
+        data = df.to_json(orient="records")
     else:
         raise ValueError(f"Uknown format: {format}")
 
-    con.close()
-    return data
+    return data.encode("utf-8")
+
 
 def generate_zip(files):
     mem_zip = BytesIO()
 
-    with zipfile.ZipFile(mem_zip, mode="w",compression=zipfile.ZIP_DEFLATED) as zf:
+    with zipfile.ZipFile(mem_zip, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
         for f in files:
             zf.writestr(f[0], f[1])
 
     return mem_zip.getvalue()
 
+
 def validate_data(df):
     columns = set(df.columns.values.tolist())
-    required = {"text", "source", "category"}
+    required = {"text"}
 
     missing = required - columns
     if missing:
@@ -58,6 +64,7 @@ def validate_data(df):
 
 
 def write():
+
     st.write("# Dane")
 
     st.write("## Dane wejściowe")
@@ -80,25 +87,27 @@ def write():
     file = st.file_uploader("Wybierz plik CSV", key="files", type="csv")
 
     if file:
-        con = sqlite3.connect(settings["database"])
-        cur = con.cursor()
+        df = pd.read_csv(file)
 
-        data = pd.read_csv(file)
-
-        is_valid, missing = validate_data(data)
+        is_valid, missing = validate_data(df)
 
         if is_valid:
-            data.to_sql("input", con, if_exists="append", index=False)
+            df = df[["text"]]
+            df["created_at"] = datetime.now()
+
+
+            records = df.to_numpy().tolist()
+            with conn.cursor() as cur:
+                cur.executemany(
+                    "INSERT INTO input (text, created_at) VALUES (%s, %s)", records
+                )
+            # data.to_sql("input", conn, if_exists="append", index=False)
             st.success(f"Pomyślnie załadowano dane z pliku: {file.name}.")
         else:
             message = "Załączony plik ma brakujące kolumny: {}.".format(
                 ", ".join(missing)
             )
             st.error(message)
-
-        con.commit()
-        cur.close()
-        con.close()
 
     st.write("## Dane wyjściowe")
     st.write(
@@ -109,19 +118,20 @@ def write():
         st.write("##### Oznaczone:")
         st.write(
             """
-            | Atrybut   | Opis                                            | Typ        | Opcjonalny |
-            |-----------|-------------------------------------------------|------------|------------|
-            | text      | Tekst zdania.                                   | str        | Nie        |
-            | timestamp | Czas oznaczenia.                                | str        | Nie        |
-            | source    | Źródło tekstu. Np. Twitter.                     | str        | Tak        |
-            | category  | Kategoria tekstu. Np. Recenzja, Komentarz etc.  | str        | Tak        |
-            | sentiment | Ogólny sentyment tekstu.                        | int        | Nie        |
-            | happiness | Emocja rozpoznawalna w tekście - radość         | int        | Nie        |
-            | sadness   | Emocja rozpoznawalna w tekście - smutek         | int        | Nie        |
-            | fear      | Emocja rozpoznawalna w tekście - strach         | int        | Nie        |
-            | disgust   | Emocja rozpoznawalna w tekście - wstręt         | int        | Nie        |
-            | anger     | Emocja rozpoznawalna w tekście - złość          | int        | Nie        |
-            | surprise  | Emocja rozpoznawalna w tekście - zaskoczenie    | int        | Nie        |
+            | Atrybut    | Opis                                            | Typ        | Opcjonalny |
+            |------------|-------------------------------------------------|------------|------------|
+            | text       | Tekst zdania.                                   | str        | Nie        |
+            | created_at | Czas oznaczenia.                                | str        | Nie        |
+            | source     | Źródło tekstu. Np. Twitter.                     | str        | Tak        |
+            | category   | Kategoria tekstu. Np. Recenzja, Komentarz etc.  | str        | Tak        |
+            | score      | Ogólny sentyment tekstu.                        | int        | Nie        |
+            | magnitude  | Natężenie emocji tekstu.                        | int        | Nie        |
+            | happiness  | Emocja rozpoznawalna w tekście - radość         | int        | Nie        |
+            | sadness    | Emocja rozpoznawalna w tekście - smutek         | int        | Nie        |
+            | fear       | Emocja rozpoznawalna w tekście - strach         | int        | Nie        |
+            | disgust    | Emocja rozpoznawalna w tekście - wstręt         | int        | Nie        |
+            | anger      | Emocja rozpoznawalna w tekście - złość          | int        | Nie        |
+            | surprise   | Emocja rozpoznawalna w tekście - zaskoczenie    | int        | Nie        |
         """
         )
         st.write("")
@@ -136,46 +146,19 @@ def write():
         Emocje są reprezentowane przez wartość numeryczną zero-jedynkową.
         """
         )
-        
+
         st.write("##### Pominięte:")
         st.write("Dane pominięte mają tę samą strukturę co dane wejściowe.")
 
-    formats = {"CSV": "csv", "TSV": "tsv", "JSON Lines": "jsonl"}
+    formats = {"CSV": "csv", "TSV": "tsv", "JSON": "json"}
 
-    exports = {"Oznaczone": "labeled", "Pominięte": "skipped"}
-
-   # export_choice = st.selectbox("Wybierz co eksportować", options=exports.keys())
-    export_selection = st.multiselect("Wybierz co eksportować", options=exports.keys(), default=["Oznaczone"])
-
-    if export_selection:
-        disable_export = False
-    else:
-        disable_export = True
-
-
-    format_choice = st.selectbox("Wybierz format pliku", options=formats.keys(), disabled=disable_export)
+    format_choice = st.selectbox("Wybierz format pliku", options=formats.keys())
     export_format = formats.get(format_choice)
 
     file_format = ""
     file = ""
-    if len(export_selection) > 1:
-        files = []
-        for selection in export_selection:
-            table = exports.get(selection)
-            data = get_data(table, export_format)
-            file_name = f"{table}_noew_data.{export_format}"
-            files.append((file_name, data))
 
-        file = generate_zip(files)
-        file_format = "zip"
-    elif len(export_selection) == 1:
-        table = exports.get(export_selection.pop())
-        file = get_data(table, export_format)
-        file_format = export_format
+    file = get_data(export_format)
+    file_format = export_format
 
-
-
-    st.download_button(
-        "Pobierz dane", file, f"noew_data.{file_format}",
-        disabled=disable_export
-    )
+    st.download_button("Pobierz dane", file, f"noew_data.{file_format}")

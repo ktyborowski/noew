@@ -1,14 +1,67 @@
-import sqlite3
 from datetime import datetime
-
 import streamlit as st
+from src import db
 
-from config import settings
+ACCEPTED_TERMS_KEY = "accepted_terms"
+
+conn = db.init_connection()
+
+class AnnotationService:
+    def __init__(self, conn) -> None:
+        self.conn = conn
+
+    score_map = {"Negatywny": 0, "Neutralny": 1, "Pozytywny": 2}
+    magnitude_map = {
+        "Znikome": 0,
+        "Niskie": 1,
+        "Umiarkowane": 2,
+        "Wysokie": 3,
+        "Bardzo Wysokie": 4,
+    }
+
+    def create_annotation(self):
+
+        with self.conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO annotation (input_id, created_at, score, magnitude, happiness, sadness, fear, disgust, anger, surprise) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                (
+                    st.session_state["text_id"],
+                    datetime.now(),
+                    self.score_map[st.session_state["score"]],
+                    self.magnitude_map[st.session_state["magnitude"]],
+                    st.session_state["happiness"],
+                    st.session_state["sadness"],
+                    st.session_state["fear"],
+                    st.session_state["disgust"],
+                    st.session_state["anger"],
+                    st.session_state["surprise"],
+                ),
+            )
+            self.conn.commit()
+
+
+annotation_service = AnnotationService(conn)
+
+
+def execute_query(connection, query: str, args=None) -> list:
+    """Given sqlite3.Connection and a string query (and optionally necessary query args as a dict),
+    Attempt to execute query with cursor, commit transaction, and return fetched rows"""
+    with conn.cursor() as cur:
+        if args is not None:
+            cur.execute(query, args)
+        else:
+            cur.execute(query)
+        connection.commit()
+        results = cur.fetchall()
+    return results
 
 
 def initalize_state():
-    if "sentiment" not in st.session_state:
-        st.session_state["sentiment"] = "Neutralny"
+    if ACCEPTED_TERMS_KEY not in st.session_state:
+        st.session_state[ACCEPTED_TERMS_KEY] = False
+
+    if "score" not in st.session_state:
+        st.session_state["score"] = "Neutralny"
 
     if "data" not in st.session_state:
         st.session_state["submit"] = False
@@ -28,65 +81,20 @@ def reset_state():
     st.session_state["anger"] = False
     st.session_state["surprise"] = False
 
-    st.session_state["sentiment"] = "Neutralny"
+    st.session_state["score"] = "Neutralny"
+    st.session_state["magnitude"] = "Znikome"
     st.session_state["text"] = None
 
 
-def insert_skip():
-    conn = sqlite3.connect(settings["database"])
-    cur = conn.cursor()
-    cur.execute(
-        "INSERT INTO skipped(text, source, category) VALUES (?, ?, ?)",
-        # FIXME: Add real category and source
-        (st.session_state["text"], "", ""),
-    )
-
-    conn.commit()
-    cur.close()
-    conn.close()
-
-
-def insert_annotation():
-    conn = sqlite3.connect(settings["database"])
-    cur = conn.cursor()
-    sentiment_map = {"Negatywny": 0, "Neutralny": 1, "Pozytywny": 2}
-    cur.execute(
-        "INSERT INTO labeled VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (
-            st.session_state["text"],
-            datetime.now(),
-            sentiment_map[st.session_state["sentiment"]],
-            st.session_state["happiness"],
-            st.session_state["sadness"],
-            st.session_state["fear"],
-            st.session_state["disgust"],
-            st.session_state["anger"],
-            st.session_state["surprise"],
-        ),
-    )
-
-    conn.commit()
-    cur.close()
-    conn.close()
-
-
 def delete_row(row_id):
-    con = sqlite3.connect(settings["database"])
-    cur = con.cursor()
-    cur.execute("""DELETE FROM input WHERE id = ?""", (row_id,))
-    con.commit()
-    cur.close()
-    con.close()
+    with conn.cursor() as cur:
+        cur.execute("UPDATE input SET annotated = true WHERE id = %s", (row_id,))
+        conn.commit()
 
 
 def on_submit(text_id):
-    insert_annotation()
-    reset_state()
-    delete_row(text_id)
+    annotation_service.create_annotation()
 
-
-def on_skip(text_id):
-    insert_skip()
     reset_state()
     delete_row(text_id)
 
@@ -100,103 +108,133 @@ def write():
     ## Narzędzie Oznaczania Emocji i Wydźwięku
     """
     )
-
-    with st.expander("Jak korzystać?"):
-        skip_message = ""
-        if not settings["unskippable"]:
-            skip_message = "*Jeśli nie wiesz jak oznaczyć zdanie, możesz je pominąć.*"
+    with st.expander("Zanim zaczniesz..."):
+        st.write("#### Jak korzystać?")
         st.write(
-            f"""
-             Oznaczanie danych za pomocą **NOEW**:
-
-             1. Poczekaj do momentu załadowania kolejnego zdania.
+            """
+             1. Poczekaj na załadowania zdania.
              2. Przeczytaj zdanie. 
-             3. Wybierz najbardziej odpowiadające emocje, kategorię oraz wydźwięk.
-             4. Zatwierdź oznaczenia. {skip_message}
+             3. Wybierz najbardziej odpowiadające emocje oraz ustal parametry wydźwięku.
+             4. Zatwierdź oznaczenia.
              5. Powtórz powyższe kroki na kolejnym zdaniu. 😉
          """
         )
 
+        st.write("#### Jak interpretować parametry wydźwięku?")
+        st.write(
+            """
+            | Wydźwięk           | Przykład                                         | Znak                | Natężenie                |
+            |--------------------|--------------------------------------------------|---------------------|--------------------------|
+            | Neutralny          | Mieszko I był władcą Polski.                     | Neutralny           | Znikome                  |
+            | Mieszany           | Długi czas dostawy, ale produkty dobrej jakości. | Neutralny           | Słabe - Umiarkowane      |
+            | Wyraźnie negatywny | Absolutnie nie polecam, strata czasu...          | Negatywny           | Wysokie - Bardzo wysokie |
+            | Wyraźnie pozytywny | Praca z Tobą to wielka przyjemność!              | Pozytywny           | Wysokie - Bardzo wysokie |
+            | Pozytywny          | Było całkiem ok.                                 | Pozytywny           | Słabe - Umiarkowane      |
+        """
+        )
+
+    with st.expander("Warunki udziału"):
+        st.write("#### Warunki")
+
+    st.checkbox("Przeczytałem/am i akceptuję warunki udziału.", key=ACCEPTED_TERMS_KEY)
+    if not st.session_state[ACCEPTED_TERMS_KEY]:
+        st.warning("Musisz zaakceptować warunki udziału, aby móc oznaczać dane.")
+
     st.write("---")
 
-    st.write("<p style='font-size:14px'>Tekst</p>", unsafe_allow_html=True)
-
     if not st.session_state["text"]:
-        con = sqlite3.connect(settings["database"])
 
-        cur = con.cursor()
+        with conn.cursor() as cur:
+            cur.execute(
+                """SELECT * FROM input WHERE fetched = false AND annotated = false LIMIT 1"""
+            )
+            row = cur.fetchone()
 
-        cur.execute("""SELECT * FROM input LIMIT 1""")
-        row = cur.fetchone()
+            if row:
+                id = row.get("id")
 
-        if row:
-            st.session_state["text"] = row[1]
-            st.session_state["text_id"] = row[0]
-        else:
-            st.session_state["text"] = None
+                st.session_state["text"] = row.get("text")
+                st.session_state["text_id"] = id
 
-        con.commit()
-        cur.close()
-        con.close()
+                cur.execute("UPDATE input SET fetched = true WHERE id = %s", (id,))
+                conn.commit()
+            else:
+                st.session_state["text"] = None
 
     if st.session_state["text"]:
+
+        st.write("###### Tekst")
         st.code(st.session_state["text"])
+        st.write("")
+
         form_col1, form_col2 = st.columns(2)
-        form_col1.write("<p style='font-size:14px'>Emocje</p>", unsafe_allow_html=True)
+        form_col1.write("###### Emocje")
 
         form_col1.checkbox(
             "😄 Radość",
             key="happiness",
             help="Stan emocjonalny, który wyraża w świadomości uczucie całkowitego spełnienia.",
+            disabled=not st.session_state[ACCEPTED_TERMS_KEY],
         )
         form_col1.checkbox(
             "😞 Smutek",
             key="sadness",
             help="Stan emocjonalny powiązany z uczuciem niekorzystnej sytuacji, stratą, rozpaczą, żałobą, żalem, bezradnością oraz rozczarowaniem.",
+            disabled=not st.session_state[ACCEPTED_TERMS_KEY],
         )
         form_col1.checkbox(
             "😱 Strach",
             key="fear",
             help="Niepokój wywołany przez grożące niebezpieczeństwo lub przez rzecz nieznaną, która wydaje się groźna.",
+            disabled=not st.session_state[ACCEPTED_TERMS_KEY],
         )
         form_col1.checkbox(
             "🤢 Wstręt",
             key="disgust",
             help="Stan emocjonalny wyrażający odrazę do czegoś, kogoś lub sytuacji.",
+            disabled=not st.session_state[ACCEPTED_TERMS_KEY],
         )
         form_col1.checkbox(
-            "😡 Gniew",
+            "😡 Złość",
             key="anger",
             help="Gwałtowna reakcja na jakiś przykry bodziec zewnętrzny wyrażająca się niezadowoleniem i agresją.",
+            disabled=not st.session_state[ACCEPTED_TERMS_KEY],
         )
         form_col1.checkbox(
             "😮 Zaskoczenie",
             key="surprise",
             help="Stan emocjonalny wywołany doświadczeniem czegoś niespodziewanego.",
+            disabled=not st.session_state[ACCEPTED_TERMS_KEY],
         )
 
+        form_col2.write("###### Wydźwięk")
         form_col2.select_slider(
-            "Wydźwięk",
-            key="sentiment",
+            "Znak",
+            key="score",
             help="Ogólne nastawienie emocjonalne zdania.",
             options=["Negatywny", "Neutralny", "Pozytywny"],
+            disabled=not st.session_state[ACCEPTED_TERMS_KEY],
         )
-        st.write("---")
 
-        buttons_col1, buttons_col2, _ = st.columns([1, 1, 3])
-        submitted = buttons_col1.button(
-            "✔️ Zatwierdź", on_click=on_submit, args=(st.session_state["text_id"],)
+        form_col2.write("")
+        form_col2.write("")
+        form_col2.select_slider(
+            "Natężenie",
+            key="magnitude",
+            help="Ogólne nastawienie emocjonalne zdania.",
+            options=["Znikome", "Niskie", "Umiarkowane", "Wysokie", "Bardzo Wysokie"],
+            disabled=not st.session_state[ACCEPTED_TERMS_KEY],
         )
-        skipped = buttons_col2.button(
-            "▶️ Pomiń",
-            on_click=on_skip,
-            disabled=settings["unskippable"],
+
+        submitted = st.button(
+            "Zatwierdź",
+            on_click=on_submit,
             args=(st.session_state["text_id"],),
+            disabled=not st.session_state[ACCEPTED_TERMS_KEY],
         )
 
         if submitted:
             st.success("Zdanie oznaczono pomyślnie. Dzięki!")
-        if skipped:
-            st.info("Pominięto zdanie.")
+
     else:
         st.warning("😕 Brak danych. Spróbuj ponownie później.")

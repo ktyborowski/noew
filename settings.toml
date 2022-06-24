@@ -2,7 +2,7 @@
 database = "noew.db"
 
 # Allow the user to skip annotation
-unskippable = false
+unskippable = true
 
 # Pages with required authentication
 auth = ["Dane", "Status"]
